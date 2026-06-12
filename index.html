@@ -1,0 +1,579 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Конвертер XML – ПКБ и ГКБ (замена устаревшего katoId)</title>
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #f0f2f5;
+            margin: 0;
+            padding: 20px;
+            color: #1e2a3a;
+        }
+        .container { max-width: 1400px; margin: 0 auto; }
+        h1 { font-size: 1.8rem; margin-bottom: 0.25rem; color: #0a5b7c; }
+        .subtitle { color: #4a627a; margin-bottom: 2rem; border-left: 4px solid #2c7da0; padding-left: 1rem; }
+        .card {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 8px 20px rgba(0,0,0,0.05);
+            padding: 1.5rem;
+            margin-bottom: 2rem;
+        }
+        .flex-row { display: flex; flex-wrap: wrap; gap: 1.5rem; margin-bottom: 1.5rem; }
+        .file-box { flex: 1; min-width: 280px; }
+        label { font-weight: 600; display: block; margin-bottom: 0.5rem; color: #2c3e50; }
+        input[type="file"] {
+            width: 100%;
+            padding: 0.6rem;
+            border: 1px solid #cbd5e1;
+            border-radius: 12px;
+            font-size: 0.9rem;
+            background: #f8fafc;
+        }
+        button {
+            background: #2c7da0;
+            border: none;
+            color: white;
+            font-weight: 600;
+            padding: 0.75rem 1.5rem;
+            border-radius: 40px;
+            cursor: pointer;
+            font-size: 0.9rem;
+            transition: 0.2s;
+            margin-right: 12px;
+            margin-top: 8px;
+        }
+        button:hover { background: #1f5e7a; transform: translateY(-1px); }
+        .btn-pkb { background: #2c7da0; }
+        .btn-gkb { background: #2e7d64; }
+        .btn-download { background: #4a627a; }
+        button:disabled { opacity: 0.5; transform: none; cursor: not-allowed; }
+        .result-area {
+            background: #1e2a36;
+            color: #e2e8f0;
+            border-radius: 18px;
+            padding: 1rem;
+            font-family: 'JetBrains Mono', 'Fira Code', monospace;
+            font-size: 12px;
+            overflow-x: auto;
+            white-space: pre-wrap;
+            word-break: break-word;
+            max-height: 600px;
+        }
+        .status {
+            padding: 0.75rem;
+            border-radius: 14px;
+            margin-top: 1rem;
+            background: #eef2ff;
+            border-left: 5px solid #2c7da0;
+        }
+        .error { background: #ffe6e5; border-left-color: #c0392b; color: #a82313; }
+        .success { background: #e0f2e9; border-left-color: #2e7d64; }
+        .badge {
+            background: #d9f0f7;
+            color: #0c4e6e;
+            border-radius: 20px;
+            padding: 2px 8px;
+            font-size: 11px;
+            font-weight: 600;
+        }
+        .file-info {
+            font-size: 12px;
+            margin-top: 8px;
+            color: #2c7da0;
+            background: #eef2ff;
+            padding: 6px 10px;
+            border-radius: 12px;
+            display: inline-block;
+        }
+        footer {
+            text-align: center;
+            font-size: 12px;
+            color: #5b7a97;
+            margin-top: 2rem;
+        }
+        .help-text { font-size: 12px; color: #5a6e7c; margin-top: 5px; }
+        .warning-box {
+            background: #fff3e0;
+            border-left: 4px solid #e67e22;
+            padding: 12px 15px;
+            border-radius: 12px;
+            margin-bottom: 20px;
+            font-size: 13px;
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>📄 Конвертер XML кредитных историй</h1>
+    <div class="subtitle">Поддержка всех полей Excel + замена устаревшего katoId (632810000 → 100000000)</div>
+
+    <div class="warning-box">
+        ⚠️ <strong>Автоматическая замена КАТО:</strong> все атрибуты <code>katoId="632810000"</code> будут заменены на <code>katoId="100000000"</code>.<br>
+        <strong>Распознавание колонок Excel:</strong> по ключевым словам.<br>
+        <strong>FundingType</strong> и <strong>OverdueInstalmentCount</strong> обновляются.
+    </div>
+
+    <div class="card">
+        <div class="flex-row">
+            <div class="file-box">
+                <label>📁 1. Исходный XML (cbs_crd_xml_*.xml)</label>
+                <input type="file" id="xmlFileInput" accept=".xml">
+                <div id="xmlFileName" class="file-info" style="display:none;"></div>
+            </div>
+            <div class="file-box">
+                <label>📊 2. Excel-файл (Доп_поля_11062026.xlsx)</label>
+                <input type="file" id="excelFileInput" accept=".xlsx, .xls">
+                <div id="excelFileName" class="file-info" style="display:none;"></div>
+            </div>
+        </div>
+        <div>
+            <button id="convertPkbBtn" class="btn-pkb">🔵 ПКБ (только новые поля)</button>
+            <button id="convertGkbBtn" class="btn-gkb">🟢 ГКБ (старые + новые, порядок XSD)</button>
+            <button id="downloadBtn" class="btn-download" disabled>💾 Скачать XML</button>
+        </div>
+        <div id="statusMessage" class="status">⏳ Ожидание загрузки файлов...</div>
+    </div>
+
+    <div class="card">
+        <h3>📄 Результат</h3>
+        <div class="result-area" id="xmlResult">// Результат появится после конвертации</div>
+    </div>
+    <footer>Распознавание колонок Excel по ключевым словам. FundingType и OverdueInstalmentCount обновляются. katoId=632810000 → 100000000.</footer>
+</div>
+
+<script src="https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js"></script>
+<script>
+    let originalXmlString = null, originalXmlFileName = null, lookupMap = new Map(), convertedXmlString = null, currentMode = null;
+    const xmlFileInput = document.getElementById('xmlFileInput');
+    const excelFileInput = document.getElementById('excelFileInput');
+    const convertPkbBtn = document.getElementById('convertPkbBtn');
+    const convertGkbBtn = document.getElementById('convertGkbBtn');
+    const downloadBtn = document.getElementById('downloadBtn');
+    const statusDiv = document.getElementById('statusMessage');
+    const xmlResultDiv = document.getElementById('xmlResult');
+    const xmlFileNameSpan = document.getElementById('xmlFileName');
+    const excelFileNameSpan = document.getElementById('excelFileName');
+
+    function setStatus(msg, isError = false) {
+        statusDiv.innerHTML = msg;
+        statusDiv.classList.remove('error', 'success');
+        statusDiv.classList.add(isError ? 'error' : 'success');
+    }
+
+    function readXmlFile(file) {
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = e => resolve(e.target.result);
+            reader.onerror = e => reject(e.target.error);
+            reader.readAsText(file, 'UTF-8');
+        });
+    }
+
+    // Функция поиска колонок по ключевым словам
+    function findColumns(headers) {
+        const normalize = s => s?.toString().trim().toLowerCase().replace(/[_\s-]/g, '');
+        const result = {
+            contractCode: null,
+            currency: null,
+            remainDebt: null,
+            remainInterest: null,
+            remainDebtPastdue: null,
+            remainInterestPastdue: null,
+            remainDebtWriteOff: null,
+            remainInterestWriteOff: null,
+            overdueInstalmentCount: null,
+            fundingType: null
+        };
+        for (let h of headers) {
+            const norm = normalize(h);
+            // Код контракта
+            if (norm.includes('кодконтракта') || (norm.includes('код') && norm.includes('контракт')) || norm === 'contractcode') {
+                result.contractCode = h;
+            }
+            // Валюта
+            if (norm.includes('вал') && !result.currency) result.currency = h;
+            // Остаток непросроченного ОД
+            if (norm.includes('remaindebt') && !norm.includes('pastdue') && !norm.includes('writeoff')) result.remainDebt = h;
+            // Остаток непросроченного вознаграждения
+            if (norm.includes('remaininterest') && !norm.includes('pastdue') && !norm.includes('writeoff')) result.remainInterest = h;
+            // Просроченный ОД
+            if (norm.includes('remaindebt') && norm.includes('pastdue')) result.remainDebtPastdue = h;
+            // Просроченное вознаграждение
+            if (norm.includes('remaininterest') && norm.includes('pastdue')) result.remainInterestPastdue = h;
+            // Списанный ОД
+            if (norm.includes('remaindebt') && norm.includes('writeoff')) result.remainDebtWriteOff = h;
+            // Списанное вознаграждение
+            if (norm.includes('remaininterest') && norm.includes('writeoff')) result.remainInterestWriteOff = h;
+            // OverdueInstalmentCount
+            if ((norm.includes('просрочк') || norm.includes('overdue')) && (norm.includes('instalmentcount') || norm.includes('installmentcount') || norm.includes('дней'))) {
+                result.overdueInstalmentCount = h;
+            }
+            // FundingType
+            if (norm.includes('видфинансирования') || norm.includes('fundingtype') || (norm.includes('финансирования') && norm.includes('вид'))) {
+                result.fundingType = h;
+            }
+        }
+        return result;
+    }
+
+    function processExcel(dataBuffer) {
+        try {
+            const workbook = XLSX.read(dataBuffer, { type: 'array' });
+            const sheet = workbook.Sheets[workbook.SheetNames[0]];
+            const rows = XLSX.utils.sheet_to_json(sheet, { defval: "" });
+            if (!rows.length) throw new Error("Excel пуст");
+            const headers = Object.keys(rows[0]);
+            const cols = findColumns(headers);
+            if (!cols.contractCode) throw new Error("Не найдена колонка 'Код контракта'");
+            const map = new Map();
+            for (let row of rows) {
+                let code = String(row[cols.contractCode] || '').trim();
+                if (!code) continue;
+                const getNum = (col) => {
+                    if (!col) return null;
+                    let val = row[col];
+                    if (val === undefined || val === null || val === '') return null;
+                    let num = parseFloat(String(val).replace(/,/g, '.').replace(/\s/g, ''));
+                    return isNaN(num) ? null : num;
+                };
+                let currency = null;
+                if (cols.currency) {
+                    let currRaw = row[cols.currency];
+                    if (currRaw && typeof currRaw === 'string') {
+                        let up = currRaw.trim().toUpperCase();
+                        if (up === 'KZT' || up === 'USD') currency = up;
+                    }
+                }
+                let overdueCount = null;
+                if (cols.overdueInstalmentCount) {
+                    let raw = row[cols.overdueInstalmentCount];
+                    if (raw !== undefined && raw !== null && raw !== '') {
+                        let num = parseInt(String(raw).replace(/\s/g, ''), 10);
+                        if (!isNaN(num)) overdueCount = num;
+                    }
+                }
+                let fundingType = null;
+                if (cols.fundingType) {
+                    let ft = row[cols.fundingType];
+                    if (ft !== undefined && ft !== null && ft !== '') {
+                        let ftNum = parseInt(String(ft).replace(/\s/g, ''), 10);
+                        if (!isNaN(ftNum)) fundingType = ftNum;
+                    }
+                }
+                map.set(code, {
+                    remainDebt: getNum(cols.remainDebt), remainInterest: getNum(cols.remainInterest),
+                    remainDebtPastdue: getNum(cols.remainDebtPastdue), remainInterestPastdue: getNum(cols.remainInterestPastdue),
+                    remainDebtWriteOff: getNum(cols.remainDebtWriteOff), remainInterestWriteOff: getNum(cols.remainInterestWriteOff),
+                    currency: currency,
+                    overdueInstalmentCount: overdueCount,
+                    fundingType: fundingType
+                });
+            }
+            setStatus(`✅ Загружено ${map.size} записей из Excel`);
+            return map;
+        } catch(e) { throw new Error(`Excel: ${e.message}`); }
+    }
+
+    function getRootNamespace(xmlDoc) {
+        return xmlDoc.documentElement.getAttribute('xmlns') || 'http://www.datapump.cig.com';
+    }
+
+    function getContractCurrencyFromXML(instalmentNode, xmlDoc, typeNode) {
+        let el = instalmentNode?.querySelector('InstalmentAmount') || instalmentNode?.querySelector('TotalAmount');
+        if (el && el.hasAttribute('currency')) {
+            let curr = el.getAttribute('currency').toUpperCase();
+            if (curr === 'USD' || curr === 'KZT') return curr;
+        }
+        if (typeNode) {
+            let creditLimit = typeNode.querySelector('Credit CreditLimit');
+            if (creditLimit && creditLimit.hasAttribute('currency')) return creditLimit.getAttribute('currency').toUpperCase();
+        }
+        return 'KZT';
+    }
+
+    function createBlock(xmlDoc, tagName, currency, values, requiredFields) {
+        const ns = getRootNamespace(xmlDoc);
+        const block = xmlDoc.createElementNS(ns, tagName);
+        for (let [child, val] of Object.entries(values)) {
+            if (val !== null && !isNaN(val)) {
+                const elem = xmlDoc.createElementNS(ns, child);
+                elem.setAttribute('currency', currency);
+                elem.textContent = parseFloat(val).toFixed(2);
+                block.appendChild(elem);
+            }
+        }
+        for (let field of requiredFields) {
+            if (!block.querySelector(field)) {
+                const elem = xmlDoc.createElementNS(ns, field);
+                elem.setAttribute('currency', currency);
+                elem.textContent = '0.00';
+                block.appendChild(elem);
+            }
+        }
+        return block;
+    }
+
+    function updateOrCreateOverdueInstalmentCount(rec, value) {
+        if (value === null || value === undefined) return;
+        let existing = rec.querySelector('OverdueInstalmentCount');
+        if (existing) {
+            existing.textContent = String(value);
+        } else {
+            const ns = getRootNamespace(rec.ownerDocument);
+            const elem = rec.ownerDocument.createElementNS(ns, 'OverdueInstalmentCount');
+            elem.textContent = String(value);
+            let outstanding = rec.querySelector('OutstandingInstalmentCount');
+            if (outstanding && outstanding.nextSibling) {
+                outstanding.after(elem);
+            } else if (outstanding) {
+                outstanding.after(elem);
+            } else {
+                rec.prepend(elem);
+            }
+        }
+    }
+
+    function updateOrCreateFundingType(generalNode, value, xmlDoc) {
+        if (value === null || value === undefined) return;
+        let existing = generalNode.querySelector('FundingType');
+        if (existing) {
+            existing.setAttribute('id', String(value));
+        } else {
+            const ns = getRootNamespace(xmlDoc);
+            const ft = xmlDoc.createElementNS(ns, 'FundingType');
+            ft.setAttribute('id', String(value));
+            let afterNode = generalNode.querySelector('CreditPurpose2');
+            if (afterNode && afterNode.nextSibling) {
+                afterNode.after(ft);
+            } else if (afterNode) {
+                afterNode.after(ft);
+            } else {
+                generalNode.prepend(ft);
+            }
+        }
+    }
+
+    // Замена устаревшего katoId
+    function updateKatoIds(xmlDoc) {
+        const elements = xmlDoc.querySelectorAll('[katoId="632810000"]');
+        let count = 0;
+        for (let el of elements) {
+            el.setAttribute('katoId', '100000000');
+            count++;
+        }
+        if (count > 0) console.log(`Заменено katoId: ${count}`);
+        return count;
+    }
+
+    function reorderRecordForGKB(record, xmlDoc) {
+        const children = Array.from(record.children);
+        const elementsMap = new Map();
+        for (let child of children) {
+            const tag = child.tagName;
+            if (!elementsMap.has(tag)) elementsMap.set(tag, []);
+            elementsMap.get(tag).push(child);
+        }
+        while (record.firstChild) record.removeChild(record.firstChild);
+        elementsMap.delete('OutstandingAmount');
+        elementsMap.delete('OverdueAmount');
+        const order = [
+            'OutstandingInstalmentCount', 'OverdueInstalmentCount',
+            'Fine', 'Penalty', 'ProlongationStartDate', 'ProlongationEndDate',
+            'LastPaymentDate', 'LastPaymentSum', 'RemainingDebtDetails', 'RemainingInterestDetails', 'RemainingPenaltyDetails'
+        ];
+        for (let tag of order) {
+            if (elementsMap.has(tag)) {
+                for (let elem of elementsMap.get(tag)) {
+                    record.appendChild(elem);
+                }
+            }
+        }
+        const known = new Set(order);
+        for (let [tag, elems] of elementsMap.entries()) {
+            if (!known.has(tag)) {
+                for (let elem of elems) record.appendChild(elem);
+            }
+        }
+    }
+
+    function transformForPKB(xmlString, map) {
+        const parser = new DOMParser();
+        const xmlDoc = parser.parseFromString(xmlString, "application/xml");
+        if (xmlDoc.querySelector('parsererror')) throw new Error("Ошибка парсинга XML");
+        const contracts = xmlDoc.querySelectorAll('Contract[operation="1"]');
+        let matched = 0, updated = 0;
+        for (let contract of contracts) {
+            const general = contract.querySelector('General');
+            if (!general) continue;
+            const code = general.querySelector('ContractCode')?.textContent.trim();
+            if (!code || !map.has(code)) continue;
+            const extra = map.get(code);
+            matched++;
+            if (extra.fundingType !== null && extra.fundingType !== undefined) {
+                updateOrCreateFundingType(general, extra.fundingType, xmlDoc);
+            }
+            const typeNode = contract.querySelector('Type');
+            const instalment = typeNode?.querySelector('Instalment');
+            if (!instalment) continue;
+            let currency = extra.currency;
+            if (!currency) currency = getContractCurrencyFromXML(instalment, xmlDoc, typeNode);
+            const records = instalment.querySelectorAll('Records Record');
+            for (let rec of records) {
+                if (extra.overdueInstalmentCount !== null && extra.overdueInstalmentCount !== undefined) {
+                    updateOrCreateOverdueInstalmentCount(rec, extra.overdueInstalmentCount);
+                }
+                rec.querySelector('OutstandingAmount')?.remove();
+                rec.querySelector('OverdueAmount')?.remove();
+                rec.querySelector('RemainingDebtDetails')?.remove();
+                rec.querySelector('RemainingInterestDetails')?.remove();
+                rec.querySelector('RemainingPenaltyDetails')?.remove();
+                const debtValues = {
+                    'RemainDebt': extra.remainDebt,
+                    'RemainDebtPastdue': extra.remainDebtPastdue,
+                    'RemainDebtWriteOff': extra.remainDebtWriteOff
+                };
+                const intValues = {
+                    'RemainInterest': extra.remainInterest,
+                    'RemainInterestPastdue': extra.remainInterestPastdue,
+                    'RemainInterestWriteOff': extra.remainInterestWriteOff
+                };
+                const debtBlock = createBlock(xmlDoc, 'RemainingDebtDetails', currency, debtValues, []);
+                const intBlock = createBlock(xmlDoc, 'RemainingInterestDetails', currency, intValues, []);
+                if (debtBlock.children.length) rec.appendChild(debtBlock);
+                if (intBlock.children.length) rec.appendChild(intBlock);
+                updated++;
+            }
+        }
+        updateKatoIds(xmlDoc);
+        return { newXml: new XMLSerializer().serializeToString(xmlDoc), matched, updated };
+    }
+
+    function transformForGKB(xmlString, map) {
+        const parser = new DOMParser();
+        const xmlDoc = parser.parseFromString(xmlString, "application/xml");
+        if (xmlDoc.querySelector('parsererror')) throw new Error("Ошибка парсинга XML");
+        const contracts = xmlDoc.querySelectorAll('Contract[operation="1"]');
+        let matched = 0, updated = 0;
+        for (let contract of contracts) {
+            const general = contract.querySelector('General');
+            if (!general) continue;
+            const code = general.querySelector('ContractCode')?.textContent.trim();
+            if (!code || !map.has(code)) continue;
+            const extra = map.get(code);
+            matched++;
+            if (extra.fundingType !== null && extra.fundingType !== undefined) {
+                updateOrCreateFundingType(general, extra.fundingType, xmlDoc);
+            }
+            const typeNode = contract.querySelector('Type');
+            const instalment = typeNode?.querySelector('Instalment');
+            if (!instalment) continue;
+            let currency = extra.currency;
+            if (!currency) currency = getContractCurrencyFromXML(instalment, xmlDoc, typeNode);
+            const records = instalment.querySelectorAll('Records Record');
+            for (let rec of records) {
+                if (extra.overdueInstalmentCount !== null && extra.overdueInstalmentCount !== undefined) {
+                    updateOrCreateOverdueInstalmentCount(rec, extra.overdueInstalmentCount);
+                }
+                rec.querySelector('OutstandingAmount')?.remove();
+                rec.querySelector('OverdueAmount')?.remove();
+                rec.querySelector('RemainingDebtDetails')?.remove();
+                rec.querySelector('RemainingInterestDetails')?.remove();
+                rec.querySelector('RemainingPenaltyDetails')?.remove();
+                const debtValues = {
+                    'RemainDebt': extra.remainDebt,
+                    'RemainDebtPastdue': extra.remainDebtPastdue,
+                    'RemainDebtWriteOff': extra.remainDebtWriteOff
+                };
+                const intValues = {
+                    'RemainInterest': extra.remainInterest,
+                    'RemainInterestPastdue': extra.remainInterestPastdue,
+                    'RemainInterestWriteOff': extra.remainInterestWriteOff
+                };
+                const debtRequired = ['RemainDebt', 'RemainDebtPastdue', 'RemainDebtWriteOff', 'RemainDebtForgiven'];
+                const intRequired = ['RemainInterest', 'RemainInterestPastdue', 'RemainInterestWriteOff', 'RemainInterestForgiven'];
+                const penRequired = ['RemainAccruedPenalty', 'RemainAccruedPenaltyWriteOff', 'RemainAccruedPenaltyForgiven'];
+                const debtBlock = createBlock(xmlDoc, 'RemainingDebtDetails', currency, debtValues, debtRequired);
+                const intBlock = createBlock(xmlDoc, 'RemainingInterestDetails', currency, intValues, intRequired);
+                const penBlock = createBlock(xmlDoc, 'RemainingPenaltyDetails', currency, {}, penRequired);
+                rec.appendChild(debtBlock);
+                rec.appendChild(intBlock);
+                rec.appendChild(penBlock);
+                updated++;
+            }
+        }
+        const allRecords = xmlDoc.querySelectorAll('Record');
+        for (let rec of allRecords) {
+            reorderRecordForGKB(rec, xmlDoc);
+        }
+        updateKatoIds(xmlDoc);
+        return { newXml: new XMLSerializer().serializeToString(xmlDoc), matched, updated };
+    }
+
+    function getOutputFileName(orig, mode) {
+        if (!orig) return `cbs_crd_${mode}.xml`;
+        const dot = orig.lastIndexOf('.');
+        const base = dot === -1 ? orig : orig.substring(0, dot);
+        const ext = dot === -1 ? '' : orig.substring(dot);
+        return `${base}_${mode}${ext}`;
+    }
+
+    async function run(mode) {
+        if (!originalXmlString) return setStatus('❌ Загрузите XML', true);
+        if (!lookupMap.size) return setStatus('⚠️ Загрузите Excel', true);
+        setStatus(`🔄 Преобразование для ${mode === 'pkb' ? 'ПКБ' : 'ГКБ'}...`);
+        try {
+            const result = mode === 'pkb' ? transformForPKB(originalXmlString, lookupMap) : transformForGKB(originalXmlString, lookupMap);
+            convertedXmlString = result.newXml;
+            currentMode = mode;
+            xmlResultDiv.textContent = convertedXmlString;
+            setStatus(`✅ Готово! Сопоставлено контрактов: ${result.matched}, обновлено Record: ${result.updated}. ${mode === 'pkb' ? 'Формат ПКБ' : 'Формат ГКБ'}. Выполнена замена katoId 632810000 → 100000000.`);
+            downloadBtn.disabled = false;
+        } catch(e) { setStatus(`❌ Ошибка: ${e.message}`, true); downloadBtn.disabled = true; convertedXmlString = null; }
+    }
+
+    function download() {
+        if (!convertedXmlString || !currentMode) return setStatus('Нет результата', true);
+        const name = getOutputFileName(originalXmlFileName, currentMode === 'pkb' ? 'ПКБ' : 'ГКБ');
+        const blob = new Blob([convertedXmlString], { type: 'application/xml' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = name;
+        a.click();
+        URL.revokeObjectURL(a.href);
+        setStatus(`✅ Скачан: ${name}`);
+    }
+
+    xmlFileInput.onchange = async e => {
+        const f = e.target.files[0];
+        if (!f) return;
+        try {
+            originalXmlString = await readXmlFile(f);
+            originalXmlFileName = f.name;
+            xmlFileNameSpan.textContent = `📄 ${originalXmlFileName}`;
+            xmlFileNameSpan.style.display = 'inline-block';
+            setStatus(`XML загружен: ${f.name}`);
+            downloadBtn.disabled = true;
+            convertedXmlString = null;
+        } catch(err) { setStatus(`Ошибка XML: ${err.message}`, true); }
+    };
+    excelFileInput.onchange = async e => {
+        const f = e.target.files[0];
+        if (!f) return;
+        try {
+            const buf = await f.arrayBuffer();
+            lookupMap = processExcel(buf);
+            excelFileNameSpan.textContent = `📊 ${f.name}`;
+            excelFileNameSpan.style.display = 'inline-block';
+        } catch(err) { setStatus(`Ошибка Excel: ${err.message}`, true); }
+    };
+    convertPkbBtn.onclick = () => run('pkb');
+    convertGkbBtn.onclick = () => run('gkb');
+    downloadBtn.onclick = download;
+    setStatus('📌 Загрузите XML и Excel, затем выберите ПКБ или ГКБ');
+</script>
+</body>
+</html>
