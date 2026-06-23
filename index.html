@@ -2,7 +2,7 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <title>Конвертер XML – ПКБ и ГКБ (замена устаревшего katoId)</title>
+    <title>Конвертер XML – ПКБ и ГКБ (замена устаревшего katoId + ContractStatus)</title>
     <style>
         * { box-sizing: border-box; }
         body {
@@ -109,12 +109,12 @@
 <body>
 <div class="container">
     <h1>📄 Конвертер XML кредитных историй</h1>
-    <div class="subtitle">Поддержка всех полей Excel + замена устаревшего katoId (632810000 → 100000000)</div>
+    <div class="subtitle">Поддержка всех полей Excel + замена устаревшего katoId (632810000 → 100000000) + ContractStatus</div>
 
     <div class="warning-box">
         ⚠️ <strong>Автоматическая замена КАТО:</strong> все атрибуты <code>katoId="632810000"</code> будут заменены на <code>katoId="100000000"</code>.<br>
         <strong>Распознавание колонок Excel:</strong> по ключевым словам.<br>
-        <strong>FundingType</strong> и <strong>OverdueInstalmentCount</strong> обновляются.
+        <strong>FundingType</strong>, <strong>OverdueInstalmentCount</strong> и <strong>ContractStatus</strong> обновляются.
     </div>
 
     <div class="card">
@@ -142,7 +142,7 @@
         <h3>📄 Результат</h3>
         <div class="result-area" id="xmlResult">// Результат появится после конвертации</div>
     </div>
-    <footer>Распознавание колонок Excel по ключевым словам. FundingType и OverdueInstalmentCount обновляются. katoId=632810000 → 100000000.</footer>
+    <footer>Распознавание колонок Excel по ключевым словам. FundingType, OverdueInstalmentCount и ContractStatus обновляются. katoId=632810000 → 100000000.</footer>
 </div>
 
 <script src="https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js"></script>
@@ -186,7 +186,8 @@
             remainDebtWriteOff: null,
             remainInterestWriteOff: null,
             overdueInstalmentCount: null,
-            fundingType: null
+            fundingType: null,
+            contractStatus: null  // <-- НОВОЕ ПОЛЕ
         };
         for (let h of headers) {
             const norm = normalize(h);
@@ -215,6 +216,10 @@
             // FundingType
             if (norm.includes('видфинансирования') || norm.includes('fundingtype') || (norm.includes('финансирования') && norm.includes('вид'))) {
                 result.fundingType = h;
+            }
+            // ContractStatus (новое)
+            if (norm.includes('статусконтракта') || norm.includes('contractstatus') || (norm.includes('статус') && norm.includes('контракт'))) {
+                result.contractStatus = h;
             }
         }
         return result;
@@ -264,13 +269,24 @@
                         if (!isNaN(ftNum)) fundingType = ftNum;
                     }
                 }
+                // --- ContractStatus (новое) ---
+                let contractStatus = null;
+                if (cols.contractStatus) {
+                    let cs = row[cols.contractStatus];
+                    if (cs !== undefined && cs !== null && cs !== '') {
+                        let csNum = parseInt(String(cs).replace(/\s/g, ''), 10);
+                        if (!isNaN(csNum)) contractStatus = csNum;
+                    }
+                }
+                // -----------------------------
                 map.set(code, {
                     remainDebt: getNum(cols.remainDebt), remainInterest: getNum(cols.remainInterest),
                     remainDebtPastdue: getNum(cols.remainDebtPastdue), remainInterestPastdue: getNum(cols.remainInterestPastdue),
                     remainDebtWriteOff: getNum(cols.remainDebtWriteOff), remainInterestWriteOff: getNum(cols.remainInterestWriteOff),
                     currency: currency,
                     overdueInstalmentCount: overdueCount,
-                    fundingType: fundingType
+                    fundingType: fundingType,
+                    contractStatus: contractStatus  // <-- добавляем в Map
                 });
             }
             setStatus(`✅ Загружено ${map.size} записей из Excel`);
@@ -357,6 +373,36 @@
         }
     }
 
+    // --- НОВАЯ ФУНКЦИЯ для ContractStatus ---
+    function updateOrCreateContractStatus(generalNode, value, xmlDoc) {
+        if (value === null || value === undefined) return;
+        let existing = generalNode.querySelector('ContractStatus');
+        if (existing) {
+            existing.setAttribute('id', String(value));
+        } else {
+            const ns = getRootNamespace(xmlDoc);
+            const cs = xmlDoc.createElementNS(ns, 'ContractStatus');
+            cs.setAttribute('id', String(value));
+            // Вставляем после ContractPhase, если есть, иначе после FundingType, иначе в конец
+            let afterNode = generalNode.querySelector('ContractPhase');
+            if (afterNode && afterNode.nextSibling) {
+                afterNode.after(cs);
+            } else if (afterNode) {
+                afterNode.after(cs);
+            } else {
+                let ft = generalNode.querySelector('FundingType');
+                if (ft && ft.nextSibling) {
+                    ft.after(cs);
+                } else if (ft) {
+                    ft.after(cs);
+                } else {
+                    generalNode.appendChild(cs);
+                }
+            }
+        }
+    }
+    // ---------------------------------------
+
     // Замена устаревшего katoId
     function updateKatoIds(xmlDoc) {
         const elements = xmlDoc.querySelectorAll('[katoId="632810000"]');
@@ -413,8 +459,13 @@
             if (!code || !map.has(code)) continue;
             const extra = map.get(code);
             matched++;
+            // FundingType
             if (extra.fundingType !== null && extra.fundingType !== undefined) {
                 updateOrCreateFundingType(general, extra.fundingType, xmlDoc);
+            }
+            // ContractStatus (новое)
+            if (extra.contractStatus !== null && extra.contractStatus !== undefined) {
+                updateOrCreateContractStatus(general, extra.contractStatus, xmlDoc);
             }
             const typeNode = contract.querySelector('Type');
             const instalment = typeNode?.querySelector('Instalment');
@@ -465,8 +516,13 @@
             if (!code || !map.has(code)) continue;
             const extra = map.get(code);
             matched++;
+            // FundingType
             if (extra.fundingType !== null && extra.fundingType !== undefined) {
                 updateOrCreateFundingType(general, extra.fundingType, xmlDoc);
+            }
+            // ContractStatus (новое)
+            if (extra.contractStatus !== null && extra.contractStatus !== undefined) {
+                updateOrCreateContractStatus(general, extra.contractStatus, xmlDoc);
             }
             const typeNode = contract.querySelector('Type');
             const instalment = typeNode?.querySelector('Instalment');
@@ -530,7 +586,7 @@
             convertedXmlString = result.newXml;
             currentMode = mode;
             xmlResultDiv.textContent = convertedXmlString;
-            setStatus(`✅ Готово! Сопоставлено контрактов: ${result.matched}, обновлено Record: ${result.updated}. ${mode === 'pkb' ? 'Формат ПКБ' : 'Формат ГКБ'}. Выполнена замена katoId 632810000 → 100000000.`);
+            setStatus(`✅ Готово! Сопоставлено контрактов: ${result.matched}, обновлено Record: ${result.updated}. ${mode === 'pkb' ? 'Формат ПКБ' : 'Формат ГКБ'}. Выполнена замена katoId 632810000 → 100000000 и обновление ContractStatus.`);
             downloadBtn.disabled = false;
         } catch(e) { setStatus(`❌ Ошибка: ${e.message}`, true); downloadBtn.disabled = true; convertedXmlString = null; }
     }
