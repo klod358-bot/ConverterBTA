@@ -116,7 +116,9 @@
         <strong>Распознавание колонок Excel:</strong> по ключевым словам.<br>
         <strong>FundingType</strong>, <strong>OverdueInstalmentCount</strong> и <strong>ContractStatus</strong> обновляются.<br>
         <strong>Для контрактов:</strong> 15458702742, 15458774000, 15458469348, 15458465090, 15458699336<br>
-        &nbsp;&nbsp;автоматически добавляется <code>&lt;NominalRate&gt;0&lt;/NominalRate&gt;</code>, если отсутствует.
+        &nbsp;&nbsp;автоматически добавляется <code>&lt;NominalRate&gt;0&lt;/NominalRate&gt;</code>, если отсутствует.<br>
+        <strong>ГКБ — блоки Identification</strong> дополняются до полной структуры: <code>IssueDate</code>, <code>ExpirationDate</code>, <code>IssuedBy</code> (страна и КАТО из адреса), <code>DocumentTypeText</code> (по typeId).<br>
+        &nbsp;&nbsp;Каких данных нет в файле — теги остаются пустыми.
     </div>
 
     <div class="card">
@@ -144,7 +146,7 @@
         <h3>📄 Результат</h3>
         <div class="result-area" id="xmlResult">// Результат появится после конвертации</div>
     </div>
-    <footer>Распознавание колонок Excel по ключевым словам. FundingType, OverdueInstalmentCount и ContractStatus обновляются. katoId=632810000 → 100000000. Для 5 контрактов добавляется NominalRate=0.</footer>
+    <footer>Распознавание колонок Excel по ключевым словам. FundingType, OverdueInstalmentCount и ContractStatus обновляются. katoId=632810000 → 100000000. Для 5 контрактов добавляется NominalRate=0. ГКБ: Identification дополняется до полной структуры.</footer>
 </div>
 
 <script src="https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js"></script>
@@ -527,6 +529,120 @@
         return { newXml: new XMLSerializer().serializeToString(xmlDoc), matched, updated };
     }
 
+    // ===== Дополнение блоков Identification для ГКБ =====
+    // Порядок тегов внутри Identification по образцу ГКБ
+    const IDENT_ORDER = ['Number', 'RegistrationDate', 'IssueDate', 'ExpirationDate', 'IssuedBy', 'DocumentTypeText'];
+    // Название документа по typeId. Если typeId нет в списке — DocumentTypeText остаётся пустым
+    const IDENT_DOC_TEXT = {
+        '1': 'РНН',
+        '7': 'Удостоверение личности',
+        '10': 'Код ОКПО',
+        '11': 'Свидетельство о государственной регистрации',
+        '14': 'Документ ИИН',
+        '15': 'Документ БИН'
+    };
+
+    function escapeHtml(s) {
+        return String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    }
+
+    function childByName(parent, localName) {
+        if (!parent) return null;
+        for (const ch of parent.children) if (ch.localName === localName) return ch;
+        return null;
+    }
+
+    function ancestorByName(el, localName) {
+        let cur = el?.parentElement;
+        while (cur && cur.localName !== localName) cur = cur.parentElement;
+        return cur;
+    }
+
+    // Адрес субъекта: у Company и Individual — свой, у руководителя (CEO) — адрес его компании
+    function findSubjectAddress(identEl) {
+        const subject = ancestorByName(identEl, 'Company') || ancestorByName(identEl, 'Individual');
+        const addresses = childByName(subject, 'Addresses');
+        if (!addresses) return null;
+        const list = Array.from(addresses.children).filter(a => a.localName === 'Address' && a.hasAttribute('locationId'));
+        return list.find(a => a.hasAttribute('katoId')) || list[0] || null;
+    }
+
+    // Дополняет каждый Identification до полной структуры ГКБ.
+    // Каких данных нет в файле — тег добавляется пустым.
+    function completeIdentificationsForGKB(xmlDoc) {
+        const ns = getRootNamespace(xmlDoc);
+        const stats = { blocks: 0, completed: 0, empty: { IssueDate: 0, ExpirationDate: 0, IssuedBy: 0, DocumentTypeText: 0 } };
+        const warnings = [];
+        const idents = Array.from(xmlDoc.getElementsByTagNameNS('*', 'Identification'));
+        for (const ident of idents) {
+            stats.blocks++;
+            const typeId = ident.getAttribute('typeId') || '';
+            const general = childByName(ancestorByName(ident, 'Contract'), 'General');
+            const code = childByName(general, 'ContractCode')?.textContent.trim() || '?';
+            const number = childByName(ident, 'Number')?.textContent.trim() || '';
+
+            if (/^0+$/.test(number) || number.length < 6) {
+                warnings.push(`Договор ${code}: подозрительный номер документа typeId ${typeId}: «${number}»`);
+            }
+            if (!IDENT_DOC_TEXT[typeId]) {
+                warnings.push(`Договор ${code}: неизвестный typeId ${typeId}, DocumentTypeText оставлен пустым`);
+            }
+
+            const byName = new Map();
+            const extras = [];
+            for (const ch of Array.from(ident.children)) {
+                if (IDENT_ORDER.includes(ch.localName) && !byName.has(ch.localName)) byName.set(ch.localName, ch);
+                else extras.push(ch);
+            }
+
+            let added = 0;
+            const addTag = (name, fill) => {
+                if (byName.has(name)) return;
+                const el = xmlDoc.createElementNS(ns, name);
+                if (fill) fill(el);
+                if (!el.textContent && !el.attributes.length) stats.empty[name]++;
+                byName.set(name, el);
+                added++;
+            };
+            addTag('IssueDate');
+            addTag('ExpirationDate');
+            addTag('IssuedBy', el => {
+                const addr = findSubjectAddress(ident);
+                if (!addr) return;
+                el.setAttribute('id', addr.getAttribute('locationId'));
+                if (addr.hasAttribute('katoId')) el.setAttribute('katoId', addr.getAttribute('katoId'));
+            });
+            addTag('DocumentTypeText', el => {
+                if (IDENT_DOC_TEXT[typeId]) el.textContent = IDENT_DOC_TEXT[typeId];
+            });
+            if (!added) continue;
+            stats.completed++;
+
+            // Пересобираем блок в порядке ГКБ, каждый тег с новой строки
+            while (ident.firstChild) ident.removeChild(ident.firstChild);
+            for (const el of [...IDENT_ORDER.map(n => byName.get(n)).filter(Boolean), ...extras]) {
+                ident.appendChild(xmlDoc.createTextNode('\n'));
+                ident.appendChild(el);
+            }
+            ident.appendChild(xmlDoc.createTextNode('\n'));
+        }
+        return { stats, warnings };
+    }
+
+    // Договоры, по которым в Record нет RemainingDebtDetails (не нашлись в Excel)
+    function findContractsWithoutBalances(xmlDoc) {
+        const res = [];
+        for (const contract of Array.from(xmlDoc.getElementsByTagNameNS('*', 'Contract'))) {
+            const general = childByName(contract, 'General');
+            const code = childByName(general, 'ContractCode')?.textContent.trim();
+            const agreement = childByName(general, 'AgreementNumber')?.textContent.trim();
+            for (const rec of Array.from(contract.getElementsByTagNameNS('*', 'Record'))) {
+                if (!childByName(rec, 'RemainingDebtDetails')) { res.push(`${code} (${agreement})`); break; }
+            }
+        }
+        return res;
+    }
+
     function transformForGKB(xmlString, map) {
         const parser = new DOMParser();
         const xmlDoc = parser.parseFromString(xmlString, "application/xml");
@@ -592,8 +708,10 @@
         for (let rec of allRecords) {
             reorderRecordForGKB(rec, xmlDoc);
         }
+        const ident = completeIdentificationsForGKB(xmlDoc);
+        const noBalances = findContractsWithoutBalances(xmlDoc);
         updateKatoIds(xmlDoc);
-        return { newXml: new XMLSerializer().serializeToString(xmlDoc), matched, updated };
+        return { newXml: new XMLSerializer().serializeToString(xmlDoc), matched, updated, ident, noBalances };
     }
 
     function getOutputFileName(orig, mode) {
@@ -613,7 +731,19 @@
             convertedXmlString = result.newXml;
             currentMode = mode;
             xmlResultDiv.textContent = convertedXmlString;
-            setStatus(`✅ Готово! Сопоставлено контрактов: ${result.matched}, обновлено Record: ${result.updated}. ${mode === 'pkb' ? 'Формат ПКБ' : 'Формат ГКБ'}. Выполнена замена katoId 632810000 → 100000000, обновление ContractStatus и добавление NominalRate=0 для 5 контрактов.`);
+            let msg = `✅ Готово! Сопоставлено контрактов: ${result.matched}, обновлено Record: ${result.updated}. ${mode === 'pkb' ? 'Формат ПКБ' : 'Формат ГКБ'}. Выполнена замена katoId 632810000 → 100000000, обновление ContractStatus и добавление NominalRate=0 для 5 контрактов.`;
+            if (result.ident) {
+                const s = result.ident.stats, e = s.empty;
+                msg += `<br>🪪 Identification: дополнено блоков ${s.completed} из ${s.blocks}. Оставлены пустыми: IssueDate — ${e.IssueDate}, ExpirationDate — ${e.ExpirationDate}, IssuedBy — ${e.IssuedBy}, DocumentTypeText — ${e.DocumentTypeText}.`;
+                const warns = [
+                    ...result.ident.warnings,
+                    ...result.noBalances.map(c => `Договор ${c}: нет в Excel, остатки (RemainingDebtDetails) не выгружены`)
+                ];
+                if (warns.length) {
+                    msg += `<details><summary>⚠️ Проверьте перед отправкой (${warns.length})</summary><ul>${warns.map(w => `<li>${escapeHtml(w)}</li>`).join('')}</ul></details>`;
+                }
+            }
+            setStatus(msg);
             downloadBtn.disabled = false;
         } catch(e) { setStatus(`❌ Ошибка: ${e.message}`, true); downloadBtn.disabled = true; convertedXmlString = null; }
     }
