@@ -118,7 +118,8 @@
         <strong>Для контрактов:</strong> 15458702742, 15458774000, 15458469348, 15458465090, 15458699336<br>
         &nbsp;&nbsp;автоматически добавляется <code>&lt;NominalRate&gt;0&lt;/NominalRate&gt;</code>, если отсутствует.<br>
         <strong>ГКБ — блоки Identification</strong> дополняются до полной структуры: <code>IssueDate</code>, <code>ExpirationDate</code>, <code>IssuedBy</code> (страна и КАТО из адреса), <code>DocumentTypeText</code> (по typeId).<br>
-        &nbsp;&nbsp;Каких данных нет в файле — теги остаются пустыми.
+        &nbsp;&nbsp;Каких данных нет в файле — теги остаются пустыми.<br>
+        <strong>ГКБ — код страны:</strong> <code>&lt;Nationality id="398"/&gt;</code> → <code>&lt;Nationality id="110"/&gt;</code> (также Citizenship, IssuedBy, locationId).
     </div>
 
     <div class="card">
@@ -146,7 +147,7 @@
         <h3>📄 Результат</h3>
         <div class="result-area" id="xmlResult">// Результат появится после конвертации</div>
     </div>
-    <footer>Распознавание колонок Excel по ключевым словам. FundingType, OverdueInstalmentCount и ContractStatus обновляются. katoId=632810000 → 100000000. Для 5 контрактов добавляется NominalRate=0. ГКБ: Identification дополняется до полной структуры.</footer>
+    <footer>Распознавание колонок Excel по ключевым словам. FundingType, OverdueInstalmentCount и ContractStatus обновляются. katoId=632810000 → 100000000. Для 5 контрактов добавляется NominalRate=0. ГКБ: Identification дополняется до полной структуры, код страны 398 → 110.</footer>
 </div>
 
 <script src="https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js"></script>
@@ -438,6 +439,25 @@
         return count;
     }
 
+    // ГКБ: код страны Казахстан по справочнику ГКБ — 110 (в исходном файле приходит ISO-код 398)
+    const COUNTRY_CODE_FROM = '398', COUNTRY_CODE_TO = '110';
+    const COUNTRY_ID_ELEMENTS = ['Nationality', 'Citizenship', 'IssuedBy'];
+    function updateCountryCodesForGKB(xmlDoc) {
+        let count = 0;
+        for (const el of xmlDoc.querySelectorAll(`[id="${COUNTRY_CODE_FROM}"]`)) {
+            if (COUNTRY_ID_ELEMENTS.includes(el.localName)) {
+                el.setAttribute('id', COUNTRY_CODE_TO);
+                count++;
+            }
+        }
+        for (const el of xmlDoc.querySelectorAll(`[locationId="${COUNTRY_CODE_FROM}"]`)) {
+            el.setAttribute('locationId', COUNTRY_CODE_TO);
+            count++;
+        }
+        if (count > 0) console.log(`Заменено кодов страны 398 → 110: ${count}`);
+        return count;
+    }
+
     function reorderRecordForGKB(record, xmlDoc) {
         const children = Array.from(record.children);
         const elementsMap = new Map();
@@ -710,8 +730,9 @@
         }
         const ident = completeIdentificationsForGKB(xmlDoc);
         const noBalances = findContractsWithoutBalances(xmlDoc);
+        const countryCodes = updateCountryCodesForGKB(xmlDoc);
         updateKatoIds(xmlDoc);
-        return { newXml: new XMLSerializer().serializeToString(xmlDoc), matched, updated, ident, noBalances };
+        return { newXml: new XMLSerializer().serializeToString(xmlDoc), matched, updated, ident, noBalances, countryCodes };
     }
 
     function getOutputFileName(orig, mode) {
@@ -732,6 +753,9 @@
             currentMode = mode;
             xmlResultDiv.textContent = convertedXmlString;
             let msg = `✅ Готово! Сопоставлено контрактов: ${result.matched}, обновлено Record: ${result.updated}. ${mode === 'pkb' ? 'Формат ПКБ' : 'Формат ГКБ'}. Выполнена замена katoId 632810000 → 100000000, обновление ContractStatus и добавление NominalRate=0 для 5 контрактов.`;
+            if (result.countryCodes !== undefined) {
+                msg += `<br>🌍 Код страны 398 → 110 (Nationality, Citizenship и др.): заменено ${result.countryCodes}.`;
+            }
             if (result.ident) {
                 const s = result.ident.stats, e = s.empty;
                 msg += `<br>🪪 Identification: дополнено блоков ${s.completed} из ${s.blocks}. Оставлены пустыми: IssueDate — ${e.IssueDate}, ExpirationDate — ${e.ExpirationDate}, IssuedBy — ${e.IssuedBy}, DocumentTypeText — ${e.DocumentTypeText}.`;
