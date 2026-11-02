@@ -119,7 +119,7 @@
         &nbsp;&nbsp;автоматически добавляется <code>&lt;NominalRate&gt;0&lt;/NominalRate&gt;</code>, если отсутствует.<br>
         <strong>ГКБ — блоки Identification</strong> дополняются до полной структуры: <code>IssueDate</code>, <code>ExpirationDate</code>, <code>IssuedBy</code> (страна и КАТО из адреса), <code>DocumentTypeText</code> (по typeId).<br>
         &nbsp;&nbsp;Каких данных нет в файле — теги остаются пустыми.<br>
-        <strong>ГКБ — код страны:</strong> <code>&lt;Nationality id="398"/&gt;</code> → <code>&lt;Nationality id="110"/&gt;</code> (также Citizenship, IssuedBy, locationId).
+        <strong>ГКБ — коды стран:</strong> <code>&lt;Nationality id="398"/&gt;</code> → <code>&lt;Nationality id="110"/&gt;</code> (Казахстан), <code>642</code> → <code>177</code> (Румыния); также Citizenship, IssuedBy, locationId.
     </div>
 
     <div class="card">
@@ -147,7 +147,7 @@
         <h3>📄 Результат</h3>
         <div class="result-area" id="xmlResult">// Результат появится после конвертации</div>
     </div>
-    <footer>Распознавание колонок Excel по ключевым словам. FundingType, OverdueInstalmentCount и ContractStatus обновляются. katoId=632810000 → 100000000. Для 5 контрактов добавляется NominalRate=0. ГКБ: Identification дополняется до полной структуры, код страны 398 → 110.</footer>
+    <footer>Распознавание колонок Excel по ключевым словам. FundingType, OverdueInstalmentCount и ContractStatus обновляются. katoId=632810000 → 100000000. Для 5 контрактов добавляется NominalRate=0. ГКБ: Identification дополняется до полной структуры, коды стран 398 → 110, 642 → 177.</footer>
 </div>
 
 <script src="https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js"></script>
@@ -439,23 +439,35 @@
         return count;
     }
 
-    // ГКБ: код страны Казахстан по справочнику ГКБ — 110 (в исходном файле приходит ISO-код 398)
-    const COUNTRY_CODE_FROM = '398', COUNTRY_CODE_TO = '110';
+    // ГКБ: коды стран по справочнику ГКБ (в исходном файле приходят ISO-коды)
+    // Чтобы добавить страну — допишите строку 'ISO-код': 'код ГКБ'
+    const COUNTRY_CODE_MAP = {
+        '398': '110',   // Казахстан
+        '642': '177'    // Румыния (ROMALTYN EXPLORATION S.R.L.)
+    };
     const COUNTRY_ID_ELEMENTS = ['Nationality', 'Citizenship', 'IssuedBy'];
     function updateCountryCodesForGKB(xmlDoc) {
-        let count = 0;
-        for (const el of xmlDoc.querySelectorAll(`[id="${COUNTRY_CODE_FROM}"]`)) {
-            if (COUNTRY_ID_ELEMENTS.includes(el.localName)) {
-                el.setAttribute('id', COUNTRY_CODE_TO);
+        const byCode = {};
+        let total = 0;
+        for (const [from, to] of Object.entries(COUNTRY_CODE_MAP)) {
+            let count = 0;
+            for (const el of xmlDoc.querySelectorAll(`[id="${from}"]`)) {
+                if (COUNTRY_ID_ELEMENTS.includes(el.localName)) {
+                    el.setAttribute('id', to);
+                    count++;
+                }
+            }
+            for (const el of xmlDoc.querySelectorAll(`[locationId="${from}"]`)) {
+                el.setAttribute('locationId', to);
                 count++;
             }
+            if (count > 0) {
+                byCode[`${from} → ${to}`] = count;
+                total += count;
+                console.log(`Заменено кодов страны ${from} → ${to}: ${count}`);
+            }
         }
-        for (const el of xmlDoc.querySelectorAll(`[locationId="${COUNTRY_CODE_FROM}"]`)) {
-            el.setAttribute('locationId', COUNTRY_CODE_TO);
-            count++;
-        }
-        if (count > 0) console.log(`Заменено кодов страны 398 → 110: ${count}`);
-        return count;
+        return { total, byCode };
     }
 
     function reorderRecordForGKB(record, xmlDoc) {
@@ -754,7 +766,9 @@
             xmlResultDiv.textContent = convertedXmlString;
             let msg = `✅ Готово! Сопоставлено контрактов: ${result.matched}, обновлено Record: ${result.updated}. ${mode === 'pkb' ? 'Формат ПКБ' : 'Формат ГКБ'}. Выполнена замена katoId 632810000 → 100000000, обновление ContractStatus и добавление NominalRate=0 для 5 контрактов.`;
             if (result.countryCodes !== undefined) {
-                msg += `<br>🌍 Код страны 398 → 110 (Nationality, Citizenship и др.): заменено ${result.countryCodes}.`;
+                const cc = result.countryCodes.byCode;
+                const ccText = Object.keys(cc).length ? Object.entries(cc).map(([k, v]) => `${k} — ${v}`).join(', ') : 'замен нет';
+                msg += `<br>🌍 Коды стран (Nationality, Citizenship и др.): ${ccText}.`;
             }
             if (result.ident) {
                 const s = result.ident.stats, e = s.empty;
