@@ -118,7 +118,7 @@
         <strong>Для контрактов:</strong> 15458702742, 15458774000, 15458469348, 15458465090, 15458699336<br>
         &nbsp;&nbsp;автоматически добавляется <code>&lt;NominalRate&gt;0&lt;/NominalRate&gt;</code>, если отсутствует.<br>
         <strong>ГКБ — блоки Identification</strong> дополняются до полной структуры: <code>IssueDate</code>, <code>ExpirationDate</code>, <code>IssuedBy</code> (страна и КАТО из адреса), <code>DocumentTypeText</code> (по typeId).<br>
-        &nbsp;&nbsp;Каких данных нет в файле — теги остаются пустыми.<br>
+        &nbsp;&nbsp;Если даты нет в источнике — элемент не создаётся, вместо него комментарий <code>&lt;!-- IssueDate отсутствует --&gt;</code>; если дата есть — в формате <code>2006-01-25</code>.<br>
         <strong>ГКБ — коды стран:</strong> <code>&lt;Nationality id="398"/&gt;</code> → <code>&lt;Nationality id="110"/&gt;</code> (Казахстан), <code>642</code> → <code>177</code> (Румыния); также Citizenship, IssuedBy, locationId.
     </div>
 
@@ -599,11 +599,29 @@
         return list.find(a => a.hasAttribute('katoId')) || list[0] || null;
     }
 
+    // Даты внутри Identification: если даты нет в источнике — элемент НЕ создаётся,
+    // на его месте пишется комментарий <!-- IssueDate отсутствует -->
+    const IDENT_DATE_TAGS = ['RegistrationDate', 'IssueDate', 'ExpirationDate'];
+
+    // Приводит дату к формату ГГГГ-ММ-ДД. Возвращает null, если формат не распознан
+    function normalizeXmlDate(value) {
+        const v = String(value || '').trim();
+        let m = v.match(/^(\d{4})-(\d{2})-(\d{2})(?:[T\s].*)?$/);
+        if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+        m = v.match(/^(\d{2})\.(\d{2})\.(\d{4})(?:\s.*)?$/);
+        if (m) return `${m[3]}-${m[2]}-${m[1]}`;
+        return null;
+    }
+
     // Дополняет каждый Identification до полной структуры ГКБ.
-    // Каких данных нет в файле — тег добавляется пустым.
+    // Отсутствующие даты — комментарием, а не пустым тегом.
     function completeIdentificationsForGKB(xmlDoc) {
         const ns = getRootNamespace(xmlDoc);
-        const stats = { blocks: 0, completed: 0, empty: { IssueDate: 0, ExpirationDate: 0, IssuedBy: 0, DocumentTypeText: 0 } };
+        const stats = {
+            blocks: 0, completed: 0,
+            missing: { RegistrationDate: 0, IssueDate: 0, ExpirationDate: 0 },
+            empty: { IssuedBy: 0, DocumentTypeText: 0 }
+        };
         const warnings = [];
         const idents = Array.from(xmlDoc.getElementsByTagNameNS('*', 'Identification'));
         for (const ident of idents) {
@@ -628,6 +646,24 @@
             }
 
             let added = 0;
+            // Даты: есть значение — приводим к ГГГГ-ММ-ДД; нет — вместо элемента комментарий
+            for (const name of IDENT_DATE_TAGS) {
+                const el = byName.get(name);
+                const raw = el ? el.textContent.trim() : '';
+                if (raw) {
+                    const norm = normalizeXmlDate(raw);
+                    if (norm === null) {
+                        warnings.push(`Договор ${code}: ${name} в нераспознанном формате «${raw}» (typeId ${typeId})`);
+                    } else if (norm !== raw) {
+                        el.textContent = norm;
+                        added++;
+                    }
+                    continue;
+                }
+                byName.set(name, xmlDoc.createComment(` ${name} отсутствует `));
+                stats.missing[name]++;
+                added++;
+            }
             const addTag = (name, fill) => {
                 if (byName.has(name)) return;
                 const el = xmlDoc.createElementNS(ns, name);
@@ -636,8 +672,6 @@
                 byName.set(name, el);
                 added++;
             };
-            addTag('IssueDate');
-            addTag('ExpirationDate');
             addTag('IssuedBy', el => {
                 const addr = findSubjectAddress(ident);
                 if (!addr) return;
@@ -772,7 +806,8 @@
             }
             if (result.ident) {
                 const s = result.ident.stats, e = s.empty;
-                msg += `<br>🪪 Identification: дополнено блоков ${s.completed} из ${s.blocks}. Оставлены пустыми: IssueDate — ${e.IssueDate}, ExpirationDate — ${e.ExpirationDate}, IssuedBy — ${e.IssuedBy}, DocumentTypeText — ${e.DocumentTypeText}.`;
+                const ms = s.missing;
+                msg += `<br>🪪 Identification: дополнено блоков ${s.completed} из ${s.blocks}. Дат нет в источнике (вместо тега комментарий): IssueDate — ${ms.IssueDate}, ExpirationDate — ${ms.ExpirationDate}, RegistrationDate — ${ms.RegistrationDate}. Пустые: IssuedBy — ${e.IssuedBy}, DocumentTypeText — ${e.DocumentTypeText}.`;
                 const warns = [
                     ...result.ident.warnings,
                     ...result.noBalances.map(c => `Договор ${c}: нет в Excel, остатки (RemainingDebtDetails) не выгружены`)
